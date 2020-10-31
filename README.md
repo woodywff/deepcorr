@@ -1,1 +1,1 @@
-# deepcorr
+# DeepCorr

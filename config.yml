@@ -1,0 +1,41 @@
+data:
+    dataset_path: data/deepcorr
+    flow_size: 300
+    pickle_path: data/tordata300.pkl
+    h5_path: data/tordata300.h5
+    n_neg_per_pos: 1 # number of unpaired flows generated from each paired flows
+    ratio_train: 0.8 # proportion of dataset for training
+    n_fold: 4
+    crossval_indices_path: data/crossval_indices.pkl
+    log_path:
+        tf: log
+    seed: 0
+train:
+    batch_size: 256
+    conv_filters:
+    - 2000
+    - 800
+#     - 64
+#     - 16
+    dense_layers:
+    - 49600
+    - 3000
+    - 800
+    - 100
+    - 1
+#     - 128
+#     - 32
+#     - 8
+#     - 1
+    drop_p: 0.6
+    lr: 0.0001
+    train_best: train_best
+    train_last: train_last
+    best_aux: train_best_aux.pkl
+    last_aux: train_last_aux.pkl
+    epochs: 200
+test:
+    batch_size: 256
+    
+FLAG_DEBUG: false
+  
