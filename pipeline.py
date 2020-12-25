@@ -54,7 +54,7 @@ class Generator():
         return np.asarray(x), np.asarray(y)
         
 class Dataset():
-    def __init__(self, cf='config.yml', cv_i=0, test_only=False, channel_last=True):
+    def __init__(self, cf='config.yml', cv_i=0, test_only=False, channel_last=True, h5_path=None):
         '''
         cf: config.yml path
         cv_i: which fold in the cross validation.
@@ -62,10 +62,11 @@ class Dataset():
         test_only: if True, only for test dataset.
         channel_last: if True, corresponds to inputs with shape (batch, height, width, channels) (for tensorflow),
                   otherwise, (batch, channels, height, width) (for pytorch and paddlepaddle).
+        h5_path: if None, use default .h5 file in config.yml, otherwise, use the given path.
         '''
         with open(cf) as f:
             self.config = yaml.load(f,Loader=yaml.FullLoader)
-        self.h5_path = self.config['data']['h5_path']
+        self.h5_path = h5_path or self.config['data']['h5_path']
         self.channel_last = channel_last
         if test_only:
             return
