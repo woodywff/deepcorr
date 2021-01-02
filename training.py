@@ -19,14 +19,18 @@ with open('config.yml') as f:
     FLAG_DEBUG = yaml.load(f,Loader=yaml.FullLoader)['FLAG_DEBUG']
 
 class Base:
-    '''
-    Base class for Training
-    cf: config.yml path
-    cv_i: Which fold in the cross validation. If cv_i >= n_fold: use all the training dataset.
-    '''
-    def __init__(self, cf='config.yml', cv_i=0):
+    def __init__(self, cf='config.yml', cv_i=0, pred_only=False, h5_path=None):
+        '''
+        Base class for training and prediction
+        cf: config.yml path
+        cv_i: Which fold in the cross validation. If cv_i >= n_fold: use all the training dataset.
+        pred_only: if True, only used for prediction process.
+        h5_path: if None, use default .h5 file in config.yml, otherwise, use the given path.
+        '''
         self.cf = cf
         self.cv_i = cv_i
+        self.pred_only = pred_only
+        self.h5_path =h5_path
         self._init_config()
         self._init_log()
         self._init_device()
@@ -46,9 +50,6 @@ class Base:
             pass
 
     def _init_device(self):
-        '''
-        So far we only consider single GPU.
-        '''
         seed = self.config['data']['seed']
         np.random.seed(seed)
         tf.random.set_seed(seed)
@@ -65,22 +66,26 @@ class Base:
         return
     
     def _init_dataset(self):
-        dataset = pipeline.Dataset(cf=self.cf, 
-                                   cv_i=self.cv_i) 
-        self.train_generator = dataset.train_generator
-        self.val_generator = dataset.val_generator
+        dataset = pipeline.Dataset(cf=self.cf, cv_i=self.cv_i, 
+                                   test_only=self.pred_only, 
+                                   h5_path=self.h5_path) 
+        if not self.pred_only:
+            self.train_generator = dataset.train_generator
+            self.val_generator = dataset.val_generator
         self.test_generator = dataset.test_generator
         return
 
-class Training(Base):
-    '''
-    Traing process
-    cf: config.yml path
-    cv_i: Which fold in the cross validation. If cv_i >= n_fold: use all the training dataset.
-    new_lr: if True, check_resume() will not load the saved states of optimizers and lr_schedulers.
-    '''
-    def __init__(self, cf='config.yml', cv_i=0, new_lr=False):
-        super().__init__(cf=cf, cv_i=cv_i)
+class Server(Base):
+    def __init__(self, cf='config.yml', cv_i=0, new_lr=False, pred_only=False, h5_path=None):
+        '''
+        cf: config.yml path
+        cv_i: Which fold in the cross validation. If cv_i >= n_fold: use all the training dataset.
+        new_lr: if True, check_resume() will not load the saved states of optimizers and lr_schedulers.
+        pred_only: if True, only used for prediction process.
+        h5_path: if None, use default .h5 file in config.yml, otherwise, use the given path.
+        '''
+        super().__init__(cf=cf, cv_i=cv_i, pred_only=pred_only, h5_path=h5_path)
+        self.pred_only = pred_only
         self._init_model()
         self.check_resume(new_lr=new_lr)
     
@@ -88,16 +93,22 @@ class Training(Base):
         self.model = DeepCorrCNN(self.config['train']['conv_filters'],
                                  self.config['train']['dense_layers'], 
                                  self.config['train']['drop_p'])
-        self.model(np.random.rand(1,8,300,1).astype('float32'),training=True)
+        self.model(np.random.rand(1,8,300,1).astype('float32'),training=not self.pred_only)
         print('Param size = {:.3f} MB'.format(calc_param_size(self.model.trainable_variables)))
         self.loss = lambda props, y_truth: tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=props,labels=y_truth))
-        self.optimizer = Adam(self.config['train']['lr']) 
-        self.scheduler = ReduceLROnPlateau(self.optimizer, framework='tf')
+        if not self.pred_only:
+            self.optimizer = Adam(self.config['train']['lr']) 
+            self.scheduler = ReduceLROnPlateau(self.optimizer, framework='tf')
 
     def check_resume(self, new_lr=False):
         '''
         Restore saved model, parameters and statistics.
         '''
+        if self.pred_only:
+            save_path = os.path.join(self.train_log, self.config['train']['train_best'])
+            self.model.load_weights(save_path)
+            return
+        
         checkpoint = tf.train.Checkpoint(model=self.model,
                                          optimizer=self.optimizer)
         self.manager = tf.train.CheckpointManager(checkpoint=checkpoint,
@@ -192,7 +203,7 @@ class Training(Base):
             saved_props = []
             saved_y_truth = []
         with tqdm(generator.epoch(), total = n_steps,
-                  desc = f'{desc} | Epoch {self.epoch}') as pbar:
+                  desc = f'{desc} | Epoch {self.epoch}' if not self.pred_only else desc) as pbar:
             for step, (x, y_truth) in enumerate(pbar):
                 x = tf.constant(x.astype('float32'))
                 y_truth = tf.constant(y_truth.astype('float32'))
@@ -203,7 +214,7 @@ class Training(Base):
                     props = tf.reshape(props, [-1]) # specific for tf.nn.sigmoid_cross_entropy_with_logits
                     loss = self.loss(props, y_truth)
                 sum_loss += loss.numpy()
-                acc = accuracy(props.numpy(), y_truth.numpy())
+                acc = accuracy(tf.sigmoid(props).numpy(), y_truth.numpy())
                 sum_acc += acc
                 if save_props:
                     saved_props = np.hstack([saved_props, props.numpy()])
@@ -219,12 +230,13 @@ class Training(Base):
         return [round(i/n_steps,3) for i in [sum_loss, sum_acc]] + ([saved_props, saved_y_truth] if save_props else [])
     
     
-    def testing(self):
+    def predict(self):
         loss, acc, props, y_truth = self.single_epoch(self.test_generator, 
                                       training = False, 
                                       desc = 'Test',
                                       save_props = True)
         print(f'Testing result: loss = {loss}, accuracy = {acc}')
+        return props, y_truth
     
 if __name__ == '__main__':
     t = Training()
